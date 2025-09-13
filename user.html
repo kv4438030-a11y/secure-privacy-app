@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KDKS — User Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; background:#f9fafc; color:#222; }
+    header { background:#007bff; color:#fff; padding:14px; text-align:center; display:flex; justify-content:space-between; align-items:center; }
+    header h1 { margin:0; font-size:20px; }
+    .logout-btn { background:#dc3545; border:none; color:#fff; padding:8px 14px; cursor:pointer; border-radius:6px; }
+    .logout-btn:hover { background:#c82333; }
+    .container { max-width:900px; margin:18px auto; padding:14px; }
+    h2 { color:#007bff; margin-bottom:12px; }
+    .file-list { list-style:none; padding:0; }
+    .file-item { background:#fff; border:1px solid #ccc; border-radius:6px; margin:6px 0; padding:10px; display:flex; justify-content:space-between; align-items:center; }
+    .file-item span { font-size:14px; color:#333; }
+    .btn-group { display:flex; gap:8px; }
+    .download-btn { background:#28a745; border:none; color:#fff; padding:6px 12px; cursor:pointer; border-radius:5px; font-size:13px; }
+    .download-btn:hover { background:#218838; }
+    .delete-btn { background:#dc3545; border:none; color:#fff; padding:6px 12px; cursor:pointer; border-radius:5px; font-size:13px; }
+    .delete-btn:hover { background:#c82333; }
+    footer { margin-top:20px; padding:12px; background:#222; color:#aaa; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>👤 KDKS — User Dashboard</h1>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+  </header>
+
+  <div class="container">
+    <h2>Your Saved Redacted Files</h2>
+    <ul id="fileList" class="file-list"></ul>
+  </div>
+
+  <footer>© 2025 KDKS</footer>
+
+  <script>
+    // Check login
+    if (!localStorage.user) {
+      alert("Please log in first.");
+      window.location.href = "index.html";
+    }
+
+    const currentUser = localStorage.user;
+    const fileList = document.getElementById('fileList');
+
+    function logout() {
+      localStorage.removeItem("user");
+      alert("You have been logged out.");
+      window.location.href = "index.html";
+    }
+
+    function loadFiles() {
+      // Read from shared users_files
+      const allUsers = JSON.parse(localStorage.getItem("users_files") || "{}");
+      const files = allUsers[currentUser] || [];
+
+      fileList.innerHTML = "";
+      if (files.length === 0) {
+        fileList.innerHTML = "<li>No files saved yet.</li>";
+        return;
+      }
+
+      files.forEach((f, idx) => {
+        const li = document.createElement("li");
+        li.className = "file-item";
+        li.innerHTML = `
+          <span>📄 ${f.name}</span>
+          <div class="btn-group">
+            <button class="download-btn" onclick="downloadFile(${idx})">Download</button>
+            <button class="delete-btn" onclick="deleteFile(${idx})">Delete</button>
+          </div>
+        `;
+        fileList.appendChild(li);
+      });
+    }
+
+    function downloadFile(index) {
+      const allUsers = JSON.parse(localStorage.getItem("users_files") || "{}");
+      const files = allUsers[currentUser] || [];
+      const f = files[index];
+      if (!f) return;
+
+      const a = document.createElement("a");
+      a.href = f.data;
+      a.download = f.name;
+      a.click();
+    }
+
+    function deleteFile(index) {
+      let allUsers = JSON.parse(localStorage.getItem("users_files") || "{}");
+      let files = allUsers[currentUser] || [];
+      if (!files[index]) return;
+      files.splice(index, 1); // remove file
+      allUsers[currentUser] = files;
+      localStorage.setItem("users_files", JSON.stringify(allUsers));
+      loadFiles(); // refresh list
+    }
+
+    loadFiles();
+  </script>
+</body>
+</html>

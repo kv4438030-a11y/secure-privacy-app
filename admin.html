@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KDKS — Secure privacy with KDKS</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin:0; background:#eef2f9; color:#111; }
+    header { background:#007bff; color:#fff; padding:14px; text-align:center; display:flex; justify-content:space-between; align-items:center; }
+    header h1 { margin:0; font-size:20px; }
+    .logout-btn { background:#dc3545; border:none; color:#fff; padding:8px 14px; cursor:pointer; border-radius:6px; }
+    .logout-btn:hover { background:#c82333; }
+    .container { max-width:1100px; margin:18px auto; padding:14px; }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:center; margin-bottom:12px; }
+    .controls label { font-size:14px; margin-right:6px; }
+    .controls input[type=file] { padding:6px; }
+    .controls select, .controls button, .controls input[type=range] { padding:8px; }
+    .preview { text-align:center; margin-top:12px; position:relative; display:inline-block; background:white; padding:8px; border-radius:6px; }
+    canvas { display:block; max-width:780px; width:auto; height:auto; border:1px solid #ccc; }
+    #overlay { position:absolute; top:8px; left:8px; pointer-events:none; }
+    .box { position:absolute; border:2px dashed rgba(220,20,60,0.9); background: rgba(255, 0, 0, 0.04); box-sizing:border-box; }
+    .small { font-size:13px; color:#333; }
+    footer { margin-top:20px; padding:12px; background:#222; color:#aaa; text-align:center; }
+    footer a { color:#fff; }
+    #savedFiles { margin-top:20px; background:#fff; padding:12px; border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.1); }
+    #savedFiles h2 { margin-top:0; font-size:18px; color:#007bff; }
+    #savedFiles ul { list-style:none; padding:0; }
+    #savedFiles li { padding:8px; margin-bottom:6px; background:#f9f9f9; border:1px solid #ddd; border-radius:6px; display:flex; justify-content:space-between; align-items:center; }
+    #savedFiles button { padding:6px 10px; border:none; border-radius:4px; cursor:pointer; }
+    .download-btn { background:#17a2b8; color:#fff; }
+    .download-btn:hover { background:#117a8b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔑 KDKS — Secure privacy with KDKS</h1>
+    <button class="logout-btn" onclick="logout()">Logout</button>
+  </header>
+  <div class="container">
+    <div class="controls">
+      <input id="fileInput" type="file" accept="image/*,application/pdf" />
+      <label for="ocrLang">OCR:</label>
+      <select id="ocrLang">
+        <option value="eng">English</option>
+        <option value="eng">TAMIL</option>
+        <option value="eng">TELUGU</option>
+      </select>
+      <label for="redactionType">Mode:</label>
+      <select id="redactionType">
+        <option value="blur">Blur</option>
+        <option value="pixelate">Pixelate</option>
+        <option value="solid">Solid Black</option>
+      </select>
+
+      <label class="small">Blur radius:</label>
+      <input id="blurRadius" type="range" min="2" max="60" value="12" />
+
+      <label class="small">Pixel size:</label>
+      <input id="pixelSize" type="range" min="4" max="40" value="10" />
+   
+      <button id="btnOCR">Auto Blur (OCR + Faces)</button>
+      <button id="btnApply">Apply Redaction</button>
+      <button id="btnSave">Save for User</button>
+    <div class="preview" id="preview">
+      <canvas id="canvas"></canvas>
+      <div id="overlay"></div>
+    <h1>YOUR FILE</h1>
+      <style>
+        h1{text-align: center;font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;}
+      </style>
+    </div>
+  </div>
+
+  <footer>© 2025 KDKS</footer>
+
+  <!-- Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const overlay = document.getElementById('overlay');
+    const fileInput = document.getElementById('fileInput');
+    const btnOCR = document.getElementById('btnOCR');
+    const btnApply = document.getElementById('btnApply');
+    const btnSave = document.getElementById('btnSave');
+    const savedList = document.getElementById('savedList');
+    const redactionTypeSelect = document.getElementById('redactionType');
+    const blurRadiusInput = document.getElementById('blurRadius');
+    const pixelSizeInput = document.getElementById('pixelSize');
+    const ocrLangSelect = document.getElementById('ocrLang');
+
+    let uploadedImage = null;
+    let regions = [];
+    let idCounter = 1;
+
+    function logout() {
+      localStorage.removeItem("user");
+      alert("You have been logged out.");
+      window.location.href = "index.html";
+    }
+
+    function renderBoxes() {
+      overlay.innerHTML = '';
+      overlay.style.width = canvas.clientWidth + 'px';
+      overlay.style.height = canvas.clientHeight + 'px';
+      for (const r of regions) {
+        const scaleX = canvas.clientWidth / canvas.width;
+        const scaleY = canvas.clientHeight / canvas.height;
+        const div = document.createElement('div');
+        div.className = 'box';
+        div.style.left = (r.x * scaleX) + 'px';
+        div.style.top = (r.y * scaleY) + 'px';
+        div.style.width = (r.w * scaleX) + 'px';
+        div.style.height = (r.h * scaleY) + 'px';
+        overlay.appendChild(div);
+      }
+    }
+
+    async function processOCR() {
+      if (!uploadedImage) return alert('Upload first!');
+      ctx.drawImage(uploadedImage, 0, 0);
+      try {
+        const lang = ocrLangSelect.value || 'eng';
+        const { data } = await Tesseract.recognize(uploadedImage, lang);
+        regions = [];
+
+        // Blur text after ":"
+        for (let i = 0; i < data.words.length; i++) {
+          const w = data.words[i];
+          if (w.text.trim().endsWith(":")) {
+            const lineId = w.line;
+            const wordsInLine = data.words.filter(x => x.line === lineId && x.bbox);
+            const afterColon = wordsInLine.filter(x => x.bbox.x0 > w.bbox.x1);
+            if (afterColon.length > 0) {
+              let minX = Math.min(...afterColon.map(x => x.bbox.x0));
+              let minY = Math.min(...afterColon.map(x => x.bbox.y0));
+              let maxX = Math.max(...afterColon.map(x => x.bbox.x1));
+              let maxY = Math.max(...afterColon.map(x => x.bbox.y1));
+              const pad = 2;
+              regions.push({ id: idCounter++, x:minX-pad, y:minY-pad, w:(maxX-minX)+2*pad, h:(maxY-minY)+2*pad });
+            }
+          }
+        }
+
+        // Detect sensitive data
+        (data.words || []).forEach((w, i) => {
+          const txt = (w.text || '').trim();
+          const lower = txt.toLowerCase();
+          const b = w.bbox;
+          if (!b) return;
+
+          const isAadhaar = /^\d{4}\s?\d{4}\s?\d{4}$/.test(txt);
+          const isPhone = /^\d{10}$/.test(txt);
+          const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(txt);
+          const isPin = /^\d{6}$/.test(txt);
+          const sensitiveKeywords = ["name", "dob", "dateofbirth", "father", "mother", "address"];
+          const isKeyword = sensitiveKeywords.includes(lower);
+          const isCapitalized = /^[A-Z][a-z]+$/.test(txt);
+          const nextWord = data.words[i+1] ? data.words[i+1].text : "";
+          const isFullName = isCapitalized && /^[A-Z][a-z]+$/.test(nextWord);
+          const isAddressLike = /(road|street|st|lane|nagar|colony|district|city|state)/i.test(lower);
+
+          if (isAadhaar || isPhone || isEmail || isPin || isKeyword || isFullName || isAddressLike) {
+            const pad = 2;
+            regions.push({
+              id: idCounter++,
+              x: b.x0 - pad,
+              y: b.y0 - pad,
+              w: (b.x1 - b.x0) + 2 * pad,
+              h: (b.y1 - b.y0) + 2 * pad
+            });
+
+            if (isFullName && data.words[i+1]) {
+              const nb = data.words[i+1].bbox;
+              regions.push({
+                id: idCounter++,
+                x: nb.x0 - pad,
+                y: nb.y0 - pad,
+                w: (nb.x1 - nb.x0) + 2 * pad,
+                h: (nb.y1 - nb.y0) + 2 * pad
+              });
+            }
+          }
+        });
+
+        await autoDetectFaces();
+        renderBoxes();
+        applyRedaction();
+      } catch (err) {
+        console.error(err);
+        alert('OCR error: ' + (err.message || err));
+      }
+    }
+
+    async function loadFaceModels() {
+      const MODEL_URL = "https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights";
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    }
+
+    async function autoDetectFaces() {
+      await loadFaceModels();
+      const detections = await faceapi.detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions());
+      detections.forEach(det => {
+        const box = det.box;
+        regions.push({ id:idCounter++, x:box.x, y:box.y, w:box.width, h:box.height });
+      });
+    }
+
+    function applyRedaction() {
+      if (!uploadedImage) return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(uploadedImage,0,0);
+      const mode = redactionTypeSelect.value;
+      const blurRadius = parseInt(blurRadiusInput.value,10) || 12;
+      const pixelSize = parseInt(pixelSizeInput.value,10) || 10;
+
+      for (const r of regions) {
+        const {x,y,w,h} = r;
+        if (mode==="blur") {
+          const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+          tmp.getContext('2d').drawImage(uploadedImage,x,y,w,h,0,0,w,h);
+          ctx.save(); ctx.filter=`blur(${blurRadius}px)`; ctx.drawImage(tmp,x,y); ctx.restore();
+        } else if (mode==="pixelate") {
+          const tmp=document.createElement('canvas'); tmp.width=w; tmp.height=h;
+          tmp.getContext('2d').drawImage(uploadedImage,x,y,w,h,0,0,w,h);
+          const sw=Math.max(1,Math.floor(w*0.1)), sh=Math.max(1,Math.floor(h*0.1));
+          const small=document.createElement('canvas'); small.width=sw; small.height=sh;
+          const sctx=small.getContext('2d'); sctx.imageSmoothingEnabled=false;
+          sctx.drawImage(tmp,0,0,sw,sh); ctx.imageSmoothingEnabled=false;
+          ctx.drawImage(small,0,0,sw,sh,x,y,w,h); ctx.imageSmoothingEnabled=true;
+        } else {
+          ctx.fillStyle="#000"; ctx.fillRect(x,y,w,h);
+        }
+      }
+    }
+
+    function saveForUser() {
+      if (!uploadedImage) {
+        alert("Please upload and redact a file first!");
+        return;
+      }
+
+      const targetUser = prompt("Enter username to save this file for:").trim();
+      if (!targetUser) {
+        alert("❌ No username entered.");
+        return;
+      }
+
+      const dataUrl = canvas.toDataURL("image/png");
+      const fileName = targetUser + "_redacted_" + Date.now() + ".png";
+
+      let allUsers = JSON.parse(localStorage.getItem("users_files") || "{}");
+      if (!allUsers[targetUser]) allUsers[targetUser] = [];
+      allUsers[targetUser].push({ name: fileName, data: dataUrl });
+      localStorage.setItem("users_files", JSON.stringify(allUsers));
+
+      renderSavedFiles(targetUser);
+      alert(`✅ File saved for user: ${targetUser}`);
+    }
+
+    function renderSavedFiles(user) {
+      let allUsers = JSON.parse(localStorage.getItem("users_files") || "{}");
+      const files = allUsers[user] || [];
+      savedList.innerHTML = "";
+      files.forEach(file => {
+        const li = document.createElement("li");
+        li.textContent = file.name;
+        const btn = document.createElement("button");
+        btn.textContent = "Download";
+        btn.className = "download-btn";
+        btn.onclick = () => {
+          const a = document.createElement("a");
+          a.href = file.data;
+          a.download = file.name;
+          a.click();
+        };
+        li.appendChild(btn);
+        savedList.appendChild(li);
+      });
+    }
+
+    fileInput.addEventListener('change', async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      regions = [];
+      if (file.type === 'application/pdf') {
+        const buffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(buffer).promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 2 });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        uploadedImage = new Image();
+        uploadedImage.onload = () => renderBoxes();
+        uploadedImage.src = canvas.toDataURL();
+      } else if (file.type.startsWith('image/')) {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          ctx.drawImage(img,0,0);
+          uploadedImage = img;
+          renderBoxes();
+        };
+        img.src = url;
+      } else {
+        alert('Unsupported file type.');
+      }
+    });
+
+    btnOCR.addEventListener('click', processOCR);
+    btnApply.addEventListener('click', applyRedaction);
+    btnSave.addEventListener('click', saveForUser);
+  </script>
+</body>
+</html>
